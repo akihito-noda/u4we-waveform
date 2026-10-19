@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>U4We 受信波形ビューア</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: instrument panel — schematic + inputs on the left, scope trace on the right; stacks to one column on phones */
+:root{
+  --bg:#f3f5f7; --panel:#ffffff; --fg:#1b2430; --muted:#5d6b7a; --line:#d5dce3; --grid:#e6ebf0;
+  --accent:#0b6e8a; --accent-soft:#d9eef4; --ref:#8a96a3;
+  --good:#1f7a4d; --good-bg:#dff2e7; --warn:#a2560b; --warn-bg:#fbead6; --bad:#b0303a; --bad-bg:#f8dfe1;
+  --edge:#9b59b6;
+  --f-body:"IBM Plex Sans JP","Hiragino Sans","Yu Gothic UI","Meiryo",system-ui,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,"Consolas",monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#12171d; --panel:#1a2129; --fg:#e3e9ef; --muted:#93a1af; --line:#2e3944; --grid:#232c35;
+  --accent:#4fc0dd; --accent-soft:#173843; --ref:#6d7a87;
+  --good:#5fd394; --good-bg:#173a29; --warn:#f0a75a; --warn-bg:#3d2a14; --bad:#ff7d86; --bad-bg:#43191d;
+  --edge:#c49ae0; color-scheme:dark;}}
+:root[data-theme="dark"]{
+  --bg:#12171d; --panel:#1a2129; --fg:#e3e9ef; --muted:#93a1af; --line:#2e3944; --grid:#232c35;
+  --accent:#4fc0dd; --accent-soft:#173843; --ref:#6d7a87;
+  --good:#5fd394; --good-bg:#173a29; --warn:#f0a75a; --warn-bg:#3d2a14; --bad:#ff7d86; --bad-bg:#43191d;
+  --edge:#c49ae0; color-scheme:dark;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:14px;line-height:1.5;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 32px}
+.wrap{max-width:1240px;margin:0 auto;display:flex;flex-direction:column;gap:16px}
+header h1{font-size:20px;font-weight:600;margin:0;text-wrap:balance}
+header p{margin:4px 0 0;color:var(--muted);max-width:70ch}
+.grid{display:grid;grid-template-columns:minmax(0,460px) minmax(0,1fr);gap:16px;align-items:start}
+@media (max-width:900px){.grid{grid-template-columns:minmax(0,1fr)}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:16px;min-width:0}
+.panel h2{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 10px}
+.col{display:flex;flex-direction:column;gap:16px;min-width:0}
+svg.sch{width:100%;height:auto;display:block}
+svg.sch .w{stroke:var(--fg);stroke-width:1.6;fill:none}
+svg.sch .t{fill:var(--fg);font-family:var(--f-body);font-size:18px}
+svg.sch .v{fill:var(--accent);font-family:var(--f-mono);font-size:15px;font-weight:500}
+svg.sch .s{fill:var(--muted);font-size:13px;font-family:var(--f-body)}
+svg.sch .dot{fill:var(--fg)}
+svg.sch .open{fill:var(--panel);stroke:var(--fg);stroke-width:1.6}
+.cap{color:var(--muted);font-size:12px;margin-top:6px}
+.fields{display:flex;flex-direction:column;gap:10px}
+.field{display:grid;grid-template-columns:7.5em minmax(0,9em) auto;align-items:center;gap:8px}
+.field label{font-weight:500}
+.field label small{display:block;color:var(--muted);font-weight:400;font-size:11.5px;line-height:1.2}
+.field input,.field select{width:100%;font-family:var(--f-mono);font-size:15px;padding:6px 8px;border:1px solid var(--line);
+  border-radius:4px;background:var(--bg);color:var(--fg);font-variant-numeric:tabular-nums}
+.field input:focus,.field select:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.unit{font-family:var(--f-mono);color:var(--muted);min-width:2.6em}
+.field .unit.main{color:var(--fg);font-weight:500}
+.sep{border:0;border-top:1px solid var(--line);margin:4px 0}
+.hint{color:var(--muted);font-size:12px}
+.mini{font-size:12px;padding:3px 8px;border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:4px;cursor:pointer;font-family:var(--f-body)}
+.mini:hover{border-color:var(--accent);color:var(--accent)}
+.status{display:flex;flex-wrap:wrap;gap:8px}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:12.5px;font-weight:500}
+.chip::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.chip.good{color:var(--good);background:var(--good-bg)}
+.chip.warn{color:var(--warn);background:var(--warn-bg)}
+.chip.bad{color:var(--bad);background:var(--bad-bg)}
+.scope{position:relative;width:100%;height:420px}
+@media (max-width:600px){.scope{height:300px}}
+.scope canvas{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:crosshair}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--muted);margin-top:8px}
+.legend i{display:inline-block;width:18px;height:0;border-top:2.5px solid var(--accent);vertical-align:middle;margin-right:5px}
+.legend i.ref{border-top:1.5px dashed var(--ref)}
+.legend i.edge{border-top:1.5px dotted var(--edge)}
+.readout{font-family:var(--f-mono);font-size:12px;color:var(--muted);min-height:1.5em;font-variant-numeric:tabular-nums}
+table.m{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+table.m td{padding:5px 4px;border-bottom:1px solid var(--grid);vertical-align:top}
+table.m td:first-child{color:var(--muted)}
+table.m td:nth-child(2){font-family:var(--f-mono);text-align:right;white-space:nowrap}
+table.m td:nth-child(3){color:var(--muted);font-size:12px;padding-left:10px}
+.eq{font-family:var(--f-mono);font-size:12px;color:var(--muted);line-height:1.7;overflow-x:auto}
+.err{color:var(--bad);font-size:13px}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin-bottom:8px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.seg button{border:0;background:var(--bg);color:var(--fg);padding:5px 12px;font:inherit;font-size:13px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--panel)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>U4We 受信波形ビューア</h1>
+    <p>Fig.&nbsp;3 の AC 等価回路について，式 (1)(2) の 2 次系ステップ応答を実時間軸で表示します．入力電圧 V<sub>0</sub> は 1&nbsp;V ステップ（振幅で正規化）です．</p>
+  </header>
+
+  <div class="grid">
+    <div class="col">
+      <section class="panel" aria-labelledby="h-sch">
+        <h2 id="h-sch">回路（Fig. 3 AC 等価回路）</h2>
+        <svg class="sch" viewBox="0 0 616 206" role="img" aria-label="UARTパルス源V0から直列ダンピング抵抗RDを経て，テキスタイル容量Ctexと合成インダクタL∥が並列にグラウンドへ接続され，その節点が受信電圧VRX">
+          <!-- source -->
+          <path class="w" d="M70 98V60H140"/>
+          <circle class="w" cx="70" cy="120" r="22"/>
+          <path class="w" d="M58 128h7v-16h10v16h7"/>
+          <path class="w" d="M70 142V182"/>
+          <text class="t" x="100" y="126">V<tspan font-size="12" dy="4">0</tspan></text>
+          <text class="s" x="44" y="112" text-anchor="end">UART</text><text class="s" x="44" y="128" text-anchor="end">pulse</text>
+          <!-- resistor RD -->
+          <path class="w" d="M140 60l5-9 10 18 10-18 10 18 10-18 10 18 5-9H500"/>
+          <text class="t" x="150" y="36">R<tspan font-size="12" dy="4">D</tspan></text>
+          <text class="v" x="150" y="94" id="sv-R">— Ω</text>
+          <text class="s" x="200" y="36">Damper</text>
+          <!-- Ctex -->
+          <circle class="dot" cx="290" cy="60" r="3.5"/>
+          <path class="w" d="M290 60V112M270 112H310M270 122H310M290 122V182"/>
+          <text class="t" x="262" y="120" text-anchor="end">C<tspan font-size="12" dy="4">tex</tspan></text>
+          <text class="v" x="262" y="148" text-anchor="end" id="sv-C">— nF</text>
+          <text class="s" x="318" y="112">Conductive textile</text><text class="s" x="318" y="128">capacitance</text>
+          <!-- L|| -->
+          <circle class="dot" cx="500" cy="60" r="3.5"/>
+          <path class="w" d="M500 60V92a8 8 0 0 1 0 16a8 8 0 0 1 0 16a8 8 0 0 1 0 16a8 8 0 0 1 0 16V182"/>
+          <text class="t" x="482" y="120" text-anchor="end">L<tspan font-size="12" dy="4">∥</tspan></text>
+          <text class="v" x="482" y="148" text-anchor="end" id="sv-L">— µH</text>
+          <text class="s" x="516" y="112">Decoupling</text><text class="s" x="516" y="128">inductors</text>
+          <!-- output -->
+          <path class="w" d="M500 60H575"/>
+          <circle class="open" cx="579" cy="60" r="4"/>
+          <text class="t" x="540" y="44">V<tspan font-size="12" dy="4">RX</tspan></text>
+          <text class="s" x="604" y="20" text-anchor="end">Received voltage</text>
+          <!-- grounds -->
+          <path class="w" d="M58 182h24M62 188h16M66 194h8"/>
+          <path class="w" d="M278 182h24M282 188h16M286 194h8"/>
+          <path class="w" d="M488 182h24M492 188h16M496 194h8"/>
+        </svg>
+        <div class="cap">L<sub>∥</sub> = L<sub>1</sub> ∥ L<sub>2</sub> ∥ … ∥ L<sub>N</sub>（全 TX/RX モジュールのデカップリングインダクタの並列合成）</div>
+      </section>
+
+      <section class="panel" aria-labelledby="h-in">
+        <h2 id="h-in">素子値</h2>
+        <form class="fields" id="form" autocomplete="off">
+          <div class="field">
+            <label for="inL">L<sub>∥</sub><small>合成インダクタンス</small></label>
+            <input id="inL" type="number" step="any" min="0" value="8.2" inputmode="decimal">
+            <span class="unit main">µH</span>
+          </div>
+          <div class="field">
+            <label for="inC">C<sub>tex</sub><small>テキスタイル容量</small></label>
+            <input id="inC" type="number" step="any" min="0" value="1.2" inputmode="decimal">
+            <span class="unit main">nF</span>
+          </div>
+          <div class="field">
+            <label for="inR">R<sub>D</sub><small>ダンピング抵抗</small></label>
+            <input id="inR" type="number" step="any" min="0" value="41" inputmode="decimal">
+            <span class="unit main">Ω</span>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <button type="button" class="mini" id="btnCrit">R<sub>D</sub> を臨界制動値 (ζ = 1) に設定</button>
+            <span class="hint" id="critHint"></span>
+          </div>
+          <hr class="sep">
+          <div class="field">
+            <label for="inT">T<sub>S</sub><small>パルス幅（1 bit）</small></label>
+            <input id="inT" type="number" step="any" min="0" value="1" inputmode="decimal">
+            <span class="unit">µs</span>
+          </div>
+          <div class="field">
+            <label for="inSpan">表示範囲<small>空欄で自動</small></label>
+            <input id="inSpan" type="number" step="any" min="0" placeholder="自動" inputmode="decimal">
+            <span class="unit">µs</span>
+          </div>
+          <div class="field" id="bitsRow">
+            <label for="inBits">ビット列<small>送信 TXD レベル</small></label>
+            <input id="inBits" type="text" value="11010101010111" spellcheck="false">
+            <span class="unit"></span>
+          </div>
+          <div class="hint">ビット列表示では，左端のレベルを定常状態（AC 結合のため受信電圧 0）とし，各エッジのステップ応答を重ね合わせます．既定値は 0x55 の UART フレーム（スタート 0，LSB 先頭，ストップ 1）です．</div>
+          <div class="err" id="err" hidden></div>
+        </form>
+      </section>
+    </div>
+
+    <div class="col">
+      <section class="panel" aria-labelledby="h-wave">
+        <div class="toolbar">
+          <h2 id="h-wave" style="margin:0;text-transform:none;letter-spacing:0;font-size:14px;color:var(--fg)">受信波形 v<sub>RX</sub>(t) / V<sub>0</sub></h2>
+          <div class="seg" role="group" aria-label="表示モード">
+            <button type="button" id="mStep" aria-pressed="true">ステップ応答</button>
+            <button type="button" id="mBits" aria-pressed="false">ビット列</button>
+          </div>
+        </div>
+        <div class="status" id="status"></div>
+        <div class="scope" id="scope" style="margin-top:10px"><canvas id="cv"></canvas></div>
+        <div class="legend">
+          <span><i></i>入力値での応答</span>
+          <span><i class="ref"></i>同じ L, C で ζ = 1（R<sub>D</sub> = ½√(L/C)）の参照</span>
+          <span><i class="edge"></i>次のエッジ（t = T<sub>S</sub> 間隔）</span>
+        </div>
+        <div class="readout" id="readout">波形上にカーソルを置くと値を表示します</div>
+      </section>
+
+      <section class="panel" aria-labelledby="h-m">
+        <h2 id="h-m">パラメータと指標</h2>
+        <table class="m"><tbody id="metrics"></tbody></table>
+        <div class="eq" style="margin-top:12px">
+          (1) V<sub>RX</sub>(s) = (2ζ/ω<sub>0</sub>)·ω<sub>0</sub>² / (s² + 2ζω<sub>0</sub>s + ω<sub>0</sub>²)<br>
+          (2) ω<sub>0</sub> = 1/√(L<sub>∥</sub>C<sub>tex</sub>),&nbsp; ζ = (1/2R<sub>D</sub>)·√(L<sub>∥</sub>/C<sub>tex</sub>)<br>
+          設計条件: ζ = 1（式 (4)），ω<sub>0</sub>T<sub>S</sub> &gt; 2π（式 (5)）
+        </div>
+      </section>
+    </div>
+  </div>
+  <footer class="hint" style="max-width:80ch">出典: A. Noda, "UART for Wearables (U4We): DC Power and Carrierless Signal Transfer Over Conductive Textiles," <i>IEEE Transactions on Circuits and Systems II: Express Briefs</i>, 2026. <a href="https://doi.org/10.1109/TCSII.2026.3735640" style="color:var(--accent)">doi:10.1109/TCSII.2026.3735640</a>．回路図は同論文 Fig. 3 に基づき再作図したものです．</footer>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const inL = $('inL'), inC = $('inC'), inR = $('inR'), inT = $('inT'), inSpan = $('inSpan'), inBits = $('inBits');
+  const cv = $('cv'), scope = $('scope');
+  let mode = 'step';
+  let state = null;     // last computed parameters
+  let view = null;      // plot transform for hover
+
+  // ---- persistence (per-viewer convenience only) ----
+  const KEY = 'u4we-wave-v1';
+  try {
+    const s = JSON.parse(localStorage.getItem(KEY) || 'null');
+    if (s) { for (const k of ['L','C','R','T','Span','Bits']) if (s[k] != null) $('in'+k).value = s[k]; if (s.mode) mode = s.mode; }
+  } catch (e) {}
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify({L:inL.value,C:inC.value,R:inR.value,T:inT.value,Span:inSpan.value,Bits:inBits.value,mode})); } catch (e) {} };
+
+  // ---- model: inverse Laplace of eq.(1) = response to unit step V0 ----
+  function h(t, w0, z) {
+    if (t <= 0) return 0;
+    if (Math.abs(z - 1) < 1e-6) return 2 * w0 * t * Math.exp(-w0 * t);
+    if (z < 1) {
+      const r = Math.sqrt(1 - z * z), wd = w0 * r;
+      return 2 * z / r * Math.exp(-z * w0 * t) * Math.sin(wd * t);
+    }
+    const r = Math.sqrt(z * z - 1);
+    return z / r * (Math.exp(-w0 * (z - r) * t) - Math.exp(-w0 * (z + r) * t));
+  }
+  function peakTime(w0, z) {
+    if (Math.abs(z - 1) < 1e-6) return 1 / w0;
+    if (z < 1) { const r = Math.sqrt(1 - z*z); return Math.atan2(r, z) / (w0 * r); }
+    const r = Math.sqrt(z*z - 1), a = w0 * (z - r), b = w0 * (z + r);
+    return Math.log(b / a) / (b - a);
+  }
+
+  // ---- formatting ----
+  function eng(x, unit, digits = 3) {
+    if (!isFinite(x)) return '—';
+    if (x === 0) return '0 ' + unit;
+    const pre = [[1e9,'G'],[1e6,'M'],[1e3,'k'],[1,''],[1e-3,'m'],[1e-6,'µ'],[1e-9,'n'],[1e-12,'p']];
+    const ax = Math.abs(x);
+    for (const [m, p] of pre) if (ax >= m * 0.9995) return (x / m).toPrecision(digits).replace(/\.?0+$/, s => s.includes('.') ? '' : s) + ' ' + p + unit;
+    return x.toExponential(2) + ' ' + unit;
+  }
+  const fmtNum = (x, d = 3) => isFinite(x) ? (+x.toPrecision(d)).toString() : '—';
+
+  function parseBits() {
+    const b = inBits.value.replace(/[^01]/g, '');
+    return b.length >= 2 ? b : '10';
+  }
+
+  // ---- compute ----
+  function compute() {
+    const L = parseFloat(inL.value) * 1e-6, C = parseFloat(inC.value) * 1e-9, R = parseFloat(inR.value);
+    const TS = parseFloat(inT.value) * 1e-6, span = parseFloat(inSpan.value) * 1e-6;
+    const errs = [];
+    if (!(L > 0)) errs.push('L∥ には正の値を入力してください．');
+    if (!(C > 0)) errs.push('Ctex には正の値を入力してください．');
+    if (!(R > 0)) errs.push('RD には正の値を入力してください（RD = 0 では ζ が無限大になります）．');
+    $('err').hidden = !errs.length; $('err').textContent = errs.join(' ');
+    $('sv-L').textContent = inL.value ? inL.value + ' µH' : '— µH';
+    $('sv-C').textContent = inC.value ? inC.value + ' nF' : '— nF';
+    $('sv-R').textContent = inR.value ? inR.value + ' Ω' : '— Ω';
+    if (errs.length) { state = null; $('status').innerHTML = ''; $('metrics').innerHTML = ''; draw(); return; }
+    const w0 = 1 / Math.sqrt(L * C), z = Math.sqrt(L / C) / (2 * R), Rcrit = Math.sqrt(L / C) / 2;
+    const T2pi = 2 * Math.PI / w0;
+    const tp = peakTime(w0, z), vp = h(tp, w0, z);
+    let vus = 0, tus = NaN;
+    if (z < 1) { const wd = w0 * Math.sqrt(1 - z*z); tus = tp + Math.PI / wd; vus = -h(tus, w0, z); }
+    const hasTS = TS > 0;
+    const resid = hasTS ? h(TS, w0, z) : NaN;
+    state = { L, C, R, w0, z, Rcrit, T2pi, tp, vp, vus, tus, TS: hasTS ? TS : NaN, span: span > 0 ? span : NaN, resid };
+    $('critHint').textContent = '= ' + fmtNum(Rcrit, 4) + ' Ω';
+    renderStatus(); renderMetrics(); draw(); save();
+  }
+
+  function renderStatus() {
+    const s = state, chips = [];
+    if (s.z < 0.95) chips.push(['bad', `振動的（ζ = ${fmtNum(s.z)} < 1）→ R_D を減らす`]);
+    else if (s.z <= 1.05) chips.push(['good', `ほぼ臨界制動（ζ = ${fmtNum(s.z)}）`]);
+    else chips.push(['warn', `過減衰（ζ = ${fmtNum(s.z)} > 1）→ R_D を増やす`]);
+    if (isFinite(s.TS)) {
+      const k = s.w0 * s.TS / (2 * Math.PI);
+      chips.push(k > 1 ? ['good', `ω₀T_S = ${fmtNum(k)}·2π > 2π`] : ['bad', `ω₀T_S = ${fmtNum(k)}·2π < 2π → L, C が大きすぎ`]);
+    }
+    $('status').innerHTML = chips.map(([c, t]) => `<span class="chip ${c}">${t.replace(/_(\w)/g, '<sub>$1</sub>')}</span>`).join('');
+  }
+
+  function renderMetrics() {
+    const s = state;
+    const rows = [
+      ['ω₀ / 2π（固有周波数）', eng(s.w0 / (2 * Math.PI), 'Hz'), 'ω₀ = ' + eng(s.w0, 'rad/s')],
+      ['ζ（減衰比）', fmtNum(s.z, 4), 'ζ = 1 で臨界制動'],
+      ['臨界制動となる R_D', eng(s.Rcrit, 'Ω', 4), '½√(L∥/Ctex)，式 (4)'],
+      ['ピーク時刻 / ピーク値', eng(s.tp, 's') + ' / ' + fmtNum(s.vp) + ' V₀', 'ζ = 1 なら ω₀t = 1，2/e ≈ 0.736'],
+      ['減衰時間 2π/ω₀', eng(s.T2pi, 's'), 'T_S はこれより長いこと'],
+      ['最大ビットレート目安 1/(2π/ω₀)', eng(1 / s.T2pi, 'b/s'), 'ω₀T_S > 2π を満たす上限'],
+      ['アンダーシュート V_us', s.z < 1 ? fmtNum(s.vus) + ' V₀ (' + eng(s.tus, 's') + ')' : 'なし', s.z < 1 ? 'ピーク比 ' + fmtNum(100 * s.vus / s.vp) + ' %' : 'ζ ≥ 1'],
+    ];
+    if (isFinite(s.TS)) rows.push(['次エッジ時の残留 v(T_S)', fmtNum(s.resid) + ' V₀', 'ピーク比 ' + fmtNum(100 * s.resid / s.vp) + ' %']);
+    const sub = t => t.replace(/_(us|S|D|0)/g, '<sub>$1</sub>');
+    $('metrics').innerHTML = rows.map(r => `<tr><td>${sub(r[0])}</td><td>${r[1]}</td><td>${sub(r[2])}</td></tr>`).join('');
+  }
+
+  // ---- plotting ----
+  function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+  function niceStep(range, n) {
+    const raw = range / n, p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p;
+    return (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * p;
+  }
+  function timeUnit(span) { return span < 1e-6 ? [1e-9, 'ns'] : span < 1e-3 ? [1e-6, 'µs'] : [1e-3, 'ms']; }
+
+  function signal(t, w0, z, bits, TS) {
+    if (mode === 'step') return h(t, w0, z);
+    let v = 0;
+    for (let k = 1; k < bits.length; k++) {
+      const d = (+bits[k]) - (+bits[k - 1]);
+      if (d) v += d * h(t - k * TS, w0, z);
+    }
+    return v;
+  }
+
+  function draw() {
+    const dpr = window.devicePixelRatio || 1;
+    const W = scope.clientWidth, H = scope.clientHeight;
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+    if (!state) { view = null; return; }
+    const s = state;
+    const C = { fg: css('--fg'), muted: css('--muted'), grid: css('--grid'), line: css('--line'), acc: css('--accent'), ref: css('--ref'), edge: css('--edge') };
+    const bits = parseBits();
+    const TS = isFinite(s.TS) ? s.TS : s.T2pi * 1.6;
+    let t1;
+    if (isFinite(s.span)) t1 = s.span;
+    else if (mode === 'step') {
+      const slow = s.z > 1 ? 4 / (s.w0 * (s.z - Math.sqrt(s.z * s.z - 1))) : 0;
+      t1 = Math.max(TS * 1.5, s.T2pi * 1.8, Math.min(slow, TS * 4));
+    } else t1 = TS * (bits.length + 0.5);
+    const t0 = -t1 * 0.06;
+
+    const N = Math.max(600, Math.min(4000, Math.round(W * 2)));
+    const xs = [], ys = [], yr = [];
+    let ymin = -0.1, ymax = 0.1;
+    for (let i = 0; i <= N; i++) {
+      const t = t0 + (t1 - t0) * i / N;
+      const v = signal(t, s.w0, s.z, bits, TS), vr = signal(t, s.w0, 1, bits, TS);
+      xs.push(t); ys.push(v); yr.push(vr);
+      ymin = Math.min(ymin, v, vr); ymax = Math.max(ymax, v, vr);
+    }
+    const pad = (ymax - ymin) * 0.08; ymin -= pad; ymax += pad;
+
+    const m = { l: 52, r: 14, t: 12, b: 40 };
+    const pw = W - m.l - m.r, ph = H - m.t - m.b;
+    const X = t => m.l + (t - t0) / (t1 - t0) * pw;
+    const Y = v => m.t + (ymax - v) / (ymax - ymin) * ph;
+    view = { X, Y, t0, t1, m, pw, ph, bits, TS };
+
+    g.font = '11px ' + css('--f-mono');
+    // grid + ticks
+    const [tu, tn] = timeUnit(t1 - t0);
+    const xs_ = niceStep((t1 - t0) / tu, Math.max(4, Math.floor(pw / 80))) * tu;
+    g.lineWidth = 1;
+    g.fillStyle = C.muted; g.textAlign = 'center'; g.textBaseline = 'top';
+    for (let k = Math.ceil(t0 / xs_); k * xs_ <= t1 + 1e-18; k++) { const t = k * xs_;
+      const x = Math.round(X(t)) + .5;
+      g.strokeStyle = C.grid; g.beginPath(); g.moveTo(x, m.t); g.lineTo(x, m.t + ph); g.stroke();
+      g.fillText(k === 0 ? "0" : fmtNum(t / tu, 4), x, m.t + ph + 6);
+    }
+    g.fillText('時間 t [' + tn + ']', m.l + pw / 2, m.t + ph + 22);
+    const ys_ = niceStep(ymax - ymin, Math.max(3, Math.floor(ph / 50)));
+    g.textAlign = 'right'; g.textBaseline = 'middle';
+    for (let k = Math.ceil(ymin / ys_); k * ys_ <= ymax + 1e-12; k++) { const v = k * ys_;
+      const y = Math.round(Y(v)) + .5;
+      g.strokeStyle = Math.abs(v) < ys_ * 1e-6 ? C.line : C.grid;
+      g.beginPath(); g.moveTo(m.l, y); g.lineTo(m.l + pw, y); g.stroke();
+      g.fillText(k === 0 ? "0" : fmtNum(v, 3), m.l - 6, y);
+    }
+    g.strokeStyle = C.line; g.strokeRect(m.l + .5, m.t + .5, pw, ph);
+
+    g.save(); g.beginPath(); g.rect(m.l, m.t, pw, ph); g.clip();
+    // edge markers
+    g.strokeStyle = C.edge; g.setLineDash([2, 3]); g.lineWidth = 1.2;
+    g.fillStyle = C.edge; g.textAlign = 'left'; g.textBaseline = 'top';
+    const edges = [];
+    if (mode === 'step') { if (isFinite(s.TS)) edges.push([s.TS, '次のエッジ (t = TS)']); }
+    else for (let k = 0; k <= bits.length; k++) edges.push([k * TS, k === 1 ? 'TS' : '']);
+    for (const [t, lab] of edges) {
+      if (t < t0 || t > t1) continue;
+      const x = Math.round(X(t)) + .5; g.beginPath(); g.moveTo(x, m.t); g.lineTo(x, m.t + ph); g.stroke();
+      if (lab) g.fillText(lab, x + 4, m.t + 4);
+    }
+    g.setLineDash([]);
+    // TXD levels in bit mode (faint, scaled)
+    if (mode === 'bits') {
+      g.fillStyle = C.muted; g.textAlign = 'center';
+      for (let k = 0; k < bits.length; k++) {
+        const xm = X((k + 0.5) * TS);
+        if (xm > m.l && xm < m.l + pw) g.fillText(bits[k], xm, m.t + 18);
+      }
+    }
+    // reference ζ=1
+    g.strokeStyle = C.ref; g.lineWidth = 1.4; g.setLineDash([5, 4]); g.beginPath();
+    xs.forEach((t, i) => i ? g.lineTo(X(t), Y(yr[i])) : g.moveTo(X(t), Y(yr[i]))); g.stroke(); g.setLineDash([]);
+    // main trace
+    g.strokeStyle = C.acc; g.lineWidth = 2.4; g.lineJoin = 'round'; g.beginPath();
+    xs.forEach((t, i) => i ? g.lineTo(X(t), Y(ys[i])) : g.moveTo(X(t), Y(ys[i]))); g.stroke();
+    // peak marker (step mode)
+    if (mode === 'step' && s.tp < t1) {
+      g.fillStyle = C.acc; g.beginPath(); g.arc(X(s.tp), Y(s.vp), 3.5, 0, 7); g.fill();
+      g.textAlign = 'left'; g.textBaseline = 'bottom'; g.fillStyle = C.fg;
+      g.fillText('peak ' + fmtNum(s.vp) + ' @ ' + eng(s.tp, 's'), X(s.tp) + 6, Y(s.vp) - 2);
+      if (s.z < 1 && s.tus < t1) {
+        g.fillStyle = C.acc; g.beginPath(); g.arc(X(s.tus), Y(-s.vus), 3.5, 0, 7); g.fill();
+        g.textBaseline = 'top'; g.fillStyle = C.fg; g.fillText('undershoot −' + fmtNum(s.vus), X(s.tus) + 6, Y(-s.vus) + 4);
+      }
+    }
+    g.restore();
+    if (hover != null) drawHover(g, C);
+  }
+
+  let hover = null;
+  function drawHover(g, C) {
+    const v = view, s = state; if (!v || !s) return;
+    const t = v.t0 + (hover - v.m.l) / v.pw * (v.t1 - v.t0);
+    if (t < v.t0 || t > v.t1) return;
+    const y = signal(t, s.w0, s.z, v.bits, v.TS);
+    const x = v.X(t);
+    g.strokeStyle = C.muted; g.lineWidth = 1; g.beginPath(); g.moveTo(x + .5, v.m.t); g.lineTo(x + .5, v.m.t + v.ph); g.stroke();
+    g.fillStyle = C.acc; g.beginPath(); g.arc(x, v.Y(y), 4, 0, 7); g.fill();
+    $('readout').textContent = `t = ${eng(t, 's', 4)}   (ω₀t = ${fmtNum(s.w0 * t, 3)})   v_RX = ${fmtNum(y, 4)} V₀`;
+  }
+  cv.addEventListener('mousemove', e => { const r = cv.getBoundingClientRect(); hover = e.clientX - r.left; draw(); });
+  cv.addEventListener('mouseleave', () => { hover = null; draw(); $('readout').textContent = '波形上にカーソルを置くと値を表示します'; });
+
+  // ---- wiring ----
+  for (const el of [inL, inC, inR, inT, inSpan, inBits]) el.addEventListener('input', compute);
+  $('form').addEventListener('submit', e => e.preventDefault());
+  $('btnCrit').addEventListener('click', () => { if (state) { inR.value = +state.Rcrit.toPrecision(4); compute(); } });
+  function setMode(m) {
+    mode = m; $('mStep').setAttribute('aria-pressed', m === 'step'); $('mBits').setAttribute('aria-pressed', m === 'bits');
+    $('bitsRow').style.opacity = m === 'bits' ? 1 : .55; draw(); save();
+  }
+  $('mStep').addEventListener('click', () => setMode('step'));
+  $('mBits').addEventListener('click', () => setMode('bits'));
+  new ResizeObserver(() => draw()).observe(scope);
+  if (window.matchMedia) matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', draw);
+  new MutationObserver(draw).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  setMode(mode);
+  compute();
+})();
+</script>
